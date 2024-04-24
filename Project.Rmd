@@ -1,0 +1,624 @@
+---
+title: "R Notebook"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+# Data Visualization - Brain Cancer Model analysis
+
+### By Hashem Fawzy
+
+Hi. Welcome to my analysis on the following Brain cancer dataset.
+
+We will create a model to analyze the following subtypes, cleanse the model of various errors such as missing data, duplicates, etc. Perform data pre-processing, and finally train and test a model of the following dataset.
+
+Before starting, you will find that the following analysis can be easily replicated on most datasets related to tumors and other various diseases involving genes and disease subtypes.
+
+The following analysis is done on R, with the a data on **cBioPortal** on Lower grade Glioma, AKA Brain Cancer.
+
+Source of the file: [*https://www.cbioportal.org/study/summary?id=lgg_tcga_pan_can_atlas_2018*](https://www.cbioportal.org/study/summary?id=lgg_tcga_pan_can_atlas_2018)*.*
+
+For our analysis, we will perform a foundation level analysis on the lower grade Glioma patient data. Our data will include 3 seperate .txt files that can be downloaded from the source. We will utilize logistic regression on our model, in order to understand and predict the models accuracy and complexity correctly.
+
+1.  **data_clinical_patient.txt.** This txt file contains data on the patients studied and logged in the brain cancer dataset. Our main focus will be on the Patient ID and Subtype
+
+2.  **data_clinical_sample.txt.** This next file contains information of the various hugo symbols associated. We will later merge this with our dataset.
+
+3.  **data_mrna_seq_v2_rsem.txt**. This last file gives the gene expression data of the various hugo symbols. This will be highly important, and needed in order to analyze whether predicting a brain cancer subtype is possible based on the information given and processed later from here.
+
+```{r}
+# Specify global settings
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Start fresh by clearing R environment
+rm(list = ls())
+
+
+
+
+# Load required libraries here
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(janitor)
+library(broom)
+library(caret) # For working with training/test data
+library(nnet)
+library(cowplot)
+library(scales) # For generating color scheme
+library(RColorBrewer) # For generating color scheme
+#Colors Here
+hex <- hue_pal()(3)
+gg_red <- hex[1]
+gg_green <- hex[2]
+gg_blue <- hex[3]
+gg_orange <- brewer.pal(n = 11, name = "PuOr")[4]
+gg_purple <- "#C77CFF"
+
+dcp <- read_tsv("D:/School/University/Semester 8/Data Visualization and Mining/lgg_tcga_pan_can_atlas_2018/data_clinical_patient.txt",skip = 4)
+#Note: Skip 4 is included as the first 3 rows explain the values of the dataset and messes it up.
+
+
+head(dcp,10)
+
+```
+
+## PT 1: Information on the dataset
+
+**Name of the Dataset:**
+
+Brain Lower Grade Glioma (TCA, Pancancer Atlas)
+
+> File name: data_clinical_patient.txt - A dataset listing the various patients and their subtypes, as well as more information about their disease and biological information
+
+List of observations: $514$ List of observations with Mrna data: $514$
+
+List of columns: $38$
+
+The following samples that contain a 12 character description(EG: ABCD-EF-GHIJ-00) show the expression profiles for this dataset. Each of these hold integer values, which explain the expression levels for the various samples on each patient (Shown in patient_sample.txt).
+
+The following list of data on the various subtypes for the various cancer patients listed is as follows:
+
+```{r}
+data_mrna_seq_v2_rsem <- read_tsv("D:/School/University/Semester 8/Data Visualization and Mining/lgg_tcga_pan_can_atlas_2018/data_mrna_seq_v2_rsem.txt")
+head(data_mrna_seq_v2_rsem,10)
+```
+
+**An Examination of the type of Brain cancer tumors (and percentages) is as follows in a suitable pie chart:**
+
+*A table is also below, if the viewer prefers it.*
+
+```{r}
+data_clinical_sample <- read_tsv("D:/School/University/Semester 8/Data Visualization and Mining/lgg_tcga_pan_can_atlas_2018/data_clinical_sample.txt",skip=4)
+head(data_clinical_sample)
+
+cat<- table(data_clinical_sample$CANCER_TYPE_DETAILED)
+pie(cat,
+    col = hcl.colors(length(cat), "BluYl"))
+
+```
+
++------------------------+----------------------------+----------------+
+| Brain Cancer Type      | Frequency (\# of Patients) | Percentage(%)  |
++========================+============================+================+
+| Astrocytoma            | 194                        | \%             |
++------------------------+----------------------------+----------------+
+| Oligodendroglioma      | 189                        | \%             |
++------------------------+----------------------------+----------------+
+| Oligoastrocytoma       | 130                        | \%             |
++------------------------+----------------------------+----------------+
+| Low-Grade Glioma (NOS) | 1                          | 0.2%           |
+|                        |                            |                |
+| \                      |                            |                |
++------------------------+----------------------------+----------------+
+| Total                  | 514                        | 100%           |
++------------------------+----------------------------+----------------+
+
+: Brain Cancer Subtypes and Frequencies
+
++-------------------------+----------------------------+------------------+
+| Brain Cancer Type       | Frequency (\# of Patients) | Treatment Option |
++=========================+============================+==================+
+| Astrocytoma             | 194                        | Radiotherapy     |
++-------------------------+----------------------------+------------------+
+| Oligodendroglioma       | 189                        | Surgery          |
++-------------------------+----------------------------+------------------+
+| Oligoastrocytoma        | 130                        | Surgery          |
++-------------------------+----------------------------+------------------+
+| Low-Grade Glioma (NOS)\ | 1                          | radiotherapy     |
++-------------------------+----------------------------+------------------+
+
+##### As you can see, Lower Grade Glioma happens in very rare circumstances, and brain cancer solutions tend to involve Radiotherapy and Surgery as a treatement. We will later remove the Low-Grade Glioma in the late part of our Assignment. But in general, the 3 other types tend to have a close triple-split on patients associated with each type. 
+
+sources:
+
+LGG: <https://www.mountsinai.org/care/neurosurgery/services/brain-tumors/what-are/low-grade-gliomas#:~:text=Treatment%20Available,are%20looking%20for%20something%20else.>
+
+Astrocytoma: <https://www.thebraintumourcharity.org/brain-tumour-diagnosis-treatment/types-of-brain-tumour-adult/astrocytoma/>
+
+Oligoastrocytoma: <https://www.moffitt.org/cancers/brain-cancer/diagnosis/types/oligoastrocytoma/#:~:text=Treatment%20may%20include%20surgery%2C%20chemotherapy,health%2C%20age%20and%20personal%20preferences.>
+
+Oligodendroglioma:<https://www.mayoclinic.org/diseases-conditions/oligodendroglioma/cdc-20350152#:~:text=Oligodendroglioma%20treatments%20include%3A,without%20harming%20healthy%20brain%20tissue.>
+
+### Pt: 2 Data Cleaning and Merging the Samples & MRNA data
+
+We will clean the rsem sequence, as the genes will be useful to analyze in a dataset. We will also clean the sample data in the same way too.
+
+Here is another look at the dataset before cleaning it
+
+```{r}
+head(data_mrna_seq_v2_rsem,10)
+```
+
+## *NA values could already be seen at the beginning of this dataset. this means we should be cleaning it.*
+
+#### Data Type Checking
+
+```{r}
+
+
+var_types <- sapply(data_mrna_seq_v2_rsem, class)
+
+cat(paste0("Hugo gene symbols type: ", var_types["Hugo_Symbol"], "\n"))
+
+
+
+p <- (length(var_types) - 1) #Cancer gene expression numbers
+if (all(var_types[2 : length(var_types)] == "numeric") == TRUE) {
+  cat(paste0("All ", p, " expression profiles are of type numeric\n. No data types need to be changed."))
+} else {
+  cat("This dataset may have contradicting datatypes")
+}
+```
+
+##### Yielded positive results, showing our dataset is clean. Onto the next
+
+#### Cleaning Missing Values
+
+```{r}
+missing_hg <- sum(is.na(data_mrna_seq_v2_rsem$Hugo_Symbol))
+cat(paste0("at least missing_hg missing Hugo symbols","\n"))
+
+#dropping NA values
+data_mrna_seq_v2_rsem <- data_mrna_seq_v2_rsem %>% drop_na(any_of("Hugo_Symbol"))
+
+number_of_missing_mrna_exp_values <- sum(is.na(data_mrna_seq_v2_rsem %>% select(3 : last_col())))
+cat(paste0("Missing mRNA expression values: ", number_of_missing_mrna_exp_values, "\n"))
+
+```
+
+##### As you see, 13 Hugo Symbols were empty. those were deleted
+
+#### Cleaning Duplicate Sets
+
+```{r}
+
+cat("Mysterious duplicate genes\n")
+hugo_gene_symbols <- data_mrna_seq_v2_rsem$Hugo_Symbol
+duplicate_hugo_gene_symbols <- hugo_gene_symbols[duplicated(hugo_gene_symbols)]
+duplicate_hugo_gene_symbols
+data_mrna_seq_v2_rsem %>% get_dupes(Hugo_Symbol)
+
+# Drop duplicate genes from the analysis
+data_mrna_seq_v2_rsem <- data_mrna_seq_v2_rsem %>% distinct(Hugo_Symbol, .keep_all = TRUE)
+
+```
+
+#### Domain Cleaning
+
+```{r}
+# Checking for non negative numbers. This isn't allowed in the dataset.
+if (any(data_mrna_seq_v2_rsem %>% select(3 : last_col()) >= 0)) {
+  cat(paste0("mRNA values are nonnegative\n"))
+} else {
+  cat(paste0("Negative numbers found!"))
+}
+
+```
+
+### Result - Gene expression cleaning
+
+```{r}
+#Final Check
+head(data_mrna_seq_v2_rsem,10)
+#Dropping Entrez_Gene_Id. This is irrelavent to our analysis.
+
+data_mrna_seq_v2_rsem <- data_mrna_seq_v2_rsem %>% select(-Entrez_Gene_Id)
+
+```
+
+## For the most part. Only 20 variables have been removed due to this. This means we can be more assured of the dataset's [Reliability.]{.underline}
+
+Now is time to repeat this with out sample data
+
+```{r}
+head(data_clinical_sample,10)
+# Only PATIENT_ID and SAMPLE_ID are relevant to our present purpose
+sample_bca <- data_clinical_sample %>% select(PATIENT_ID, SAMPLE_ID)
+
+```
+
+```{r}
+# Collect variable types
+var_types <- sapply(data_clinical_sample, class)
+
+# Patient and sample Id type check
+cat(paste0("Patient Id data type: ", var_types["PATIENT_ID"], "\n"))
+cat(paste0("Sample Id data type: ", var_types["SAMPLE_ID"], "\n"))
+```
+
+#### Do the Sample IDs match the Patient ID (EG: TCGA-CS-4938 = TCGA-CS-4938-01)
+
+```{r}
+# Check that the Patient Ids and Sample Ids are consistent
+n <- nrow(data_clinical_sample)
+p_ids <- data_clinical_sample$PATIENT_ID
+s_ids <- data_clinical_sample$SAMPLE_ID
+bad_rows <- NULL
+
+for (i in 1 : n) {
+  patient_id <- p_ids[i]
+  sample_id <- s_ids[i]
+  sample_id_trunc <- str_sub(sample_id, start = 1, end = -4) 
+  
+  # if any of the patient ids dont match with the sample ids, then group the wrong together.
+  if (patient_id != sample_id_trunc) {
+    replace <- c(replace, i)
+  }
+}
+number_to_replace <- length(replace)
+
+if (number_to_replace == 0) { #If we have no mistakes 
+  cat("All patients have matching sample ids\n")
+} else {
+  cat(paste0("There exists", number_to_replace, " or more Patient Ids that do not match the Sample Ids\n"))
+}
+```
+
+#### Missing Value Check
+
+```{r}
+
+number_of_missing_p_ids <- sum(is.na(data_clinical_sample$PATIENT_ID))
+cat(paste0("Missing Patient Ids: ", number_of_missing_p_ids, "\n"))
+
+number_of_missing_s_ids <- sum(is.na(data_clinical_sample$SAMPLE_ID))
+cat(paste0("Missing Sample Ids: ", number_of_missing_s_ids, "\n"))
+```
+
+##### Both say 0, which means the patient_sample.txt has no missing data
+
+#### Duplicate Check
+
+```{r}
+any(duplicated(sample_bca))
+```
+
+## Result - No change in sample patients
+
+### Nothing was needed to be removed in the sample file, perfect.
+
+One more dataset to clean is the Clinical Patient Data. We will do the same as in the Sample Patient Data
+
+```{r}
+# Only PATIENT_ID and SUBTYPE are relevant to our present purpose
+pclin_df_clean <- dcp %>% select(PATIENT_ID, SUBTYPE)
+```
+
+```{r}
+number_of_missing_p_ids <- sum(is.na(dcp$PATIENT_ID))
+cat(paste0("We have this many missing patient Ids: ", number_of_missing_p_ids, "\n"))
+
+number_of_missing_subtypes <- sum(is.na(dcp$SUBTYPE))
+cat(paste0("We have this many missing sample Ids: ", number_of_missing_subtypes, "\n"))
+
+# Drop patients with missing subtype
+pclin_df_clean <- pclin_df_clean %>% drop_na(any_of("SUBTYPE"))
+```
+
+```{r}
+# Collect variable types
+var_types <- sapply(dcp, class)
+
+# Patient Id type check
+cat(paste0("Patient Id type: ", var_types["PATIENT_ID"], "\n"))
+
+# Cancer molecular subtype type check
+cat(paste0("Cancer molecular subtype type: ", var_types["SUBTYPE"], "\n"))
+
+```
+
+```{r}
+# Check subtypes are as expected
+subtype_tab <- table(dcp$SUBTYPE)
+subtype_tab
+
+#All subtypes have a large part of the involvement in the dataset. So, we will not remove any subtype.
+```
+
+##### Interestingly, the Codel and Non Codel could be merged together to better form an analysis on the gene expression prediction.
+
+#### Now, We will merge the Patient Samples with the Patient Data, and write it to a csv file.
+
+```{r}
+# Merge patient and sample clinical tibbles on columns of interest
+clinical_df <- right_join(pclin_df_clean, sample_bca, by = "PATIENT_ID") %>%
+  select(c(SAMPLE_ID, SUBTYPE))
+clinical_df
+
+```
+
+```{r}
+# Transpose the cleaned mRNA expression data
+mrna_df_clean_final <- data_mrna_seq_v2_rsem %>% 
+     column_to_rownames(var = "Hugo_Symbol") %>% 
+     as.data.frame()
+mrna_df <- as.tibble(t(mrna_df_clean_final), rownames = "SAMPLE_ID")
+
+# Print to console
+head(mrna_df, 10)
+
+# Merge gene expression data with clinical data
+dataset_final <- merge(clinical_df, mrna_df, by = "SAMPLE_ID")
+
+# Drop NA sample subtypes that got added in the joining
+dataset_final <- dataset_final %>% drop_na(any_of("SUBTYPE"))
+```
+
+```{r}
+# Write to CSV
+write_csv(x = dataset_final, file = "bca-mrna-expression-data-with-cancer-subtypes.csv") 
+```
+
+#### We have merged the files together, however, we are not done yet. there is still some preprocessing we need to do.
+
+## Part 3: Preprocessing
+
+```{r}
+mydata <- read_csv("D:/School/University/Semester 8/Data Visualization and Mining/bca-mrna-expression-data-with-cancer-subtypes.csv")
+head(mydata,10)
+
+
+```
+
+```{r}
+mydata %>% group_by(SUBTYPE) %>% 
+  summarise(MEAN_ERBB2_EXP = mean(ERBB2), .groups = 'drop')
+```
+
+```{r}
+ggplot(mydata, aes(x = ERBB2)) +
+  geom_histogram(color=gg_blue,fill = gg_red) +
+  ggtitle("mRNA expression over the frequency of values") +
+  xlab("Expression level") +
+  ylab("Frequency of Values") +
+  theme_minimal()
+```
+
+### Interestingly there gleams to be an understanding that with the current Gene expression data, the frequency tends to lie in the 0-1000 range. with a right skewed angle. We will later log transform the dataset to get a better understanding, however.
+
+```{r}
+
+ggplot(mydata, aes(x = log2(ERBB2 + 1))) +
+  geom_histogram(color=gg_red,fill = gg_blue) +
+  ggtitle("log2 transformed mRNA expression values over the frequency level
+          ") +
+  xlab("Expression level") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+#### Interestingly, the Log2 transformed data has now been symmetrical as all of the values have transformed to better fit the ggplot. Now, the log 2 transformed data lies in the areas from 8.5-10. 
+
+### Log 2 Transformation
+
+```{r}
+# Keeping
+mydata_log2 <- mydata
+
+# A Base R way: Log transform the expression values
+column_offset <- 2 # Keep track of the first two columns of clinical annotations
+hugo_gene_symbols <- colnames(mydata_log2)[-c(1 : column_offset)] # Store HUGO gene symbols
+gene_count <- length(hugo_gene_symbols) # Number of genes
+for (i in (column_offset + 1) : ncol(mydata_log2)) {
+  mydata_log2[, i] <- log2(mydata[, i] + 1) # Log2 transform with unit offset
+}
+```
+
+```{r}
+# Standardize the log2 transformed mRNA expression values
+#This is useful to do in the event you encounter fold changes, and target unregulated genes in the analysis as well as resgulared genes.
+data_log2_scaled <- mydata_log2
+
+mu <- mean(mydata_log2 %>% select(where(is.numeric)) %>% as.matrix())
+sd <- sd(mydata_log2 %>% select(where(is.numeric)) %>% as.matrix())
+
+# Calculate sample Z-scores (A Base R way): 
+for(i in 3 : ncol(mydata_log2)) {
+  data_log2_scaled[, i] <- (mydata_log2[, i] - mu) / sd
+}
+data_log2_scaled[1:10, ]
+```
+
+```{r}
+# Keep top 5000 most variable genes
+hugo_gene_symbols <- colnames(data_log2_scaled)[-c(1, 2)]
+top_n <- 5000 # keep the top 5000 with highest variance across patient samples
+gexp_mat <- data_log2_scaled %>%
+  select(where(is.numeric)) %>%
+  as.matrix()
+gexp_sds <- apply(gexp_mat, 2, sd)
+keep_hugo_gene_symbols <- hugo_gene_symbols[order(gexp_sds, decreasing = TRUE)[1 : top_n]]
+drop_hugo_gene_symbols <- setdiff(hugo_gene_symbols, keep_hugo_gene_symbols)
+
+print("low variance genes:")
+length(drop_hugo_gene_symbols)
+
+# Filter out low variance genes
+data_log2_scaled_reduced <- data_log2_scaled %>% 
+  select(all_of(c("SAMPLE_ID", "SUBTYPE", keep_hugo_gene_symbols)))
+data_log2_scaled_reduced[1:10, ]
+```
+
+```{r}
+write_csv(x = data_log2_scaled_reduced, file ="bca-mrna-expression-data-with-cancer-subtypes-preprocessed.csv") #You will find this file in your working directory
+```
+
+### Pt 4: Modeling and Testing/Training, using the log2 model
+
+```{r}
+data <- read_csv("bca-mrna-expression-data-with-cancer-subtypes-preprocessed.csv")
+head(data)
+```
+
+```{r}
+# Combine the Non-codal and codal subtypes together to make for easier modeling
+data <- data %>%
+  mutate(SUBTYPE = recode(SUBTYPE, "LGG_IDHmut-codel" = "LGG_IDHmut", "LGG_IDHmut-non-codel" = "LGG_IDHmut"))
+
+```
+
+```{r}
+# Set random seed for reproducibility reason
+set.seed(343534) #Random Seed = Student ID
+
+# Create training/test data split. We will do an 80/20 rule, meaning 80% of the dataset is for training while the rest is testing.
+index <- createDataPartition(data$SUBTYPE, p = 0.80, list = FALSE)
+train <- data[index,]
+test <- data[-index,]
+```
+
+```{r}
+#Principle Component Analysis - Train and test
+train_pca_fit <- train %>% 
+  select(where(is.numeric)) %>% # retain only numeric columns
+  prcomp()
+```
+
+```{r}
+#Train
+train_pca <- predict(train_pca_fit, train) %>%
+  as_tibble() %>%
+  add_column(SUBTYPE = train$SUBTYPE, .before = 1)
+
+train_pca
+#Test 
+test_pca <- predict(train_pca_fit, test) %>%
+  as_tibble() %>%
+  add_column(SUBTYPE = test$SUBTYPE, .before = 1)
+
+# Print to console
+test_pca
+```
+
+```{r}
+# Subtype counts in the training data
+table(train$SUBTYPE)
+
+# Subtype counts in test data
+table(test$SUBTYPE)
+```
+
+##### As we are going to take the principle components from the worst outcome, we must choose LGG_IDHwt. there are 74 here in the training set, meaning that if we were to follow a 1/10 rule, we would consider the 7 principle components
+
+#### We need to have a reference subtype ready for our training dataset. Luckily, there is a subtype with many outcomes which we just combined with 2 of the same: LGG_IDHmut
+
+```{r}
+train_pca$SUBTYPE <- relevel(factor(train_pca$SUBTYPE), ref = "LGG_IDHmut")
+
+# Create training sub-dataset consisting of the top 7 principal components
+top <- 7
+train_pca_sub1 <- train_pca[,1 : (top + 1)]
+
+multinom_fit1 <- multinom(SUBTYPE ~ ., data = train_pca_sub1)
+
+# Print model summary to console
+summary(multinom_fit1)
+```
+
+```{r}
+# Predict test data tumor subtypes
+p1 <- predict(multinom_fit1, test_pca)
+
+# Creating a confusion matrix using the table command 
+confusion_mat1 <- table(p1, test_pca$SUBTYPE)
+cat("\nConfusion Matrix (top 7 PCs):\n")
+confusion_mat1
+
+# Calculate missclassification rate
+accuracy_rate1 <- sum(diag(confusion_mat1)) / sum(confusion_mat1)
+missclassification_rate1 <- 1 - accuracy_rate1
+cat("\nMisclassification Rate (top 7 PCs):\n")
+missclassification_rate1
+```
+
+```{r}
+# Fit multinomial logistic regression model to training data
+multinom_fit2 <- multinom(SUBTYPE ~ PC1 + PC2, data = train_pca)
+
+# Predict test data tumor subtypes
+p2 <- predict(multinom_fit2, test_pca)
+
+# Create confusion matrix
+confusion_mat2 <- table(p2, test_pca$SUBTYPE)
+cat("\nConfusion Matrix (top 2 PCs):\n")
+confusion_mat2
+
+# Calculate missclassification rate
+accuracy_rate2 <- sum(diag(confusion_mat2)) / sum(confusion_mat2)
+missclassification_rate2 <- 1 - accuracy_rate2
+cat("\nMisclassification Rate (top 2 PCs):\n")
+missclassification_rate2
+```
+
+```{r}
+# Test 3, this time using 100 Principle components!
+hund <- 100
+train_pca_sub3 <- train_pca[, 1 : (hund + 1)]
+
+# Fit multinomial logistic regression model to training data
+multinom_fit3 <- multinom(SUBTYPE ~ ., data = train_pca_sub3)
+
+# prediction performed on the datasets
+p3 <- predict(multinom_fit3, test_pca)
+
+# Create confusion matrix- useful for understanding subtypes during test
+confusion_mat3 <- table(p3, test_pca$SUBTYPE)
+cat("\nConfusion Matrix (100 Features/PCs):\n")
+confusion_mat3
+
+# Calculate missclassification rate
+accuracy_rate3 <- sum(diag(confusion_mat3)) / sum(confusion_mat3)
+missclassification_rate3 <- 1 - accuracy_rate3
+cat("\nMisclassification Rate (00 PCs/Features):\n")
+missclassification_rate3
+```
+
+## Executive Summary:
+
+#### The following logistic model with the 3 different principle components: 7, 2, and 100, have created great missclassification rates and show great potential in the Logistic model
+
+Model 1 has classified 95% of the molecular subtypes of the Brain cancer gene expression dataset correctly. Great potential! but there is more.
+
+Model 2, which uses 2 principle components, has garnered 97% of the molecular subtypes correctly in its training/testing phase. This means that it is better than Model 1 and while it only uses 2 features, only has a 3% potential in finding incorrect values.
+
+Lastly, Model 3, which uses 100, has in a most surprising feat, garnered 100% of the molecular subtypes, No mistakes! This model would be perfect for this data set, although the amount of features it uses needs to be brought into attention.
+
+In the end, for the most potentially great model, you would think it to be **model 3**, as there is seemingly no reason why to pass the model with the highest accuracy and perfect too. However, the number of features a model has is shown to be potentially bad in terms of the model's longevity. Keeping the amount of features minimal is key to collecting a great and useful model outside of its practice datasets.
+
+This is why I believe that **Model 2** is the best in terms of the highest accuracy and lowest features. three percent may be risky, but it shows the model can avoid being overfit.
+
+#### This Statistical Analysis has ended with the following conclusion to our hypothesis: 
+
+#### Yes, the possibility of predicting the molecular subtype using gene expression data is wholly possible. We have analyzed and done visual inspections on the dataset to clear it of missing data, and examined the subtypes and other factors when preprocessing the data. Finally, we have utilized a great model, the Logistic model, in order to find and predict our testing set correctly. 
+
+### Results & Conclusion:
+
+Utilizing the Logistic Model, and testing with several different features, we gathered that utilizing 2 features in our model yielded the best accuracy with the lowest number of principle components, thereby avoiding over fitting somewhat. We accomplished our hypothesis with the endgoal of utilizing this model on other different forms of tumors.
+
+This analysis did not come without several challenges, however. One of these challenges, such as the requirement of preprocessed and data fit for the model is required. For certain datasets of the same type of tumor, this woud not be possible with the same model to determine molecular subtype over gene expression. Several acts had to be performed on the patient data, sample data, and rsem data, in order to fit it for the model.
+
+In conclusion, the course that taught me how to perform Data-Visualization and processing, taught me how to perform modelling and preprocessing on datasets such as the ones on this analysis. Follow up work, such as continuing the examination of different tumors, such as colon cancer or lung cancer could yield results capable of predicting the molecular subtype, similar to what was done here. Further tests could even possibly yield the gene expression, if with careful research and better management of the data. The results of this led myself to understand more about cancer and the various gene expressions that are involved in the mutant disease, further providing a scientific explanation on it.
+
+## Thank you
